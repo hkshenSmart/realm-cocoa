@@ -30,6 +30,50 @@
 
 using namespace realm;
 
+@implementation RLMSyncSubscriptionOptions
+@end
+
+static std::vector<LinkPathPart> parseKeypath(StringData keypath, Group const& group,
+                                              Schema const& schema, const ObjectSchema *objectSchema) {
+    auto check = [&](bool condition, const char* fmt, auto... args) {
+        if (!condition) {
+            throw std::invalid_argument(util::format("Invalid LinkingObjects inclusion from key path '%1': %2.",
+                                                     keypath, util::format(fmt, args...)));
+        }
+    };
+
+    const char* begin = keypath.data();
+    const char* end = keypath.data() + keypath.size();
+    check(begin != end, "missing property name");
+
+    std::vector<LinkPathPart> ret;
+    while (begin != end) {
+        auto sep = std::find(begin, end, '.');
+        check(sep != begin && sep + 1 != end, "missing property name");
+        StringData key(begin, sep - begin);
+        begin = sep + (sep != end);
+
+        auto prop = objectSchema->property_for_name(key);
+        check(prop, "property '%1.%2' does not exist", objectSchema->name, key);
+        check(prop->type == PropertyType::Object || prop->type == PropertyType::LinkingObjects,
+              "property '%1.%2' is of unsupported type '%3'",
+              objectSchema->name, key, string_for_property_type(prop->type));
+
+        objectSchema = &*schema.find(prop->object_type);
+
+        if (prop->type == PropertyType::Object) {
+            check(begin != end, "property '%1.%2' of type 'object' cannot be the final property in the key path",
+                  objectSchema->name, key);
+            ret.emplace_back(prop->table_column);
+        }
+        else {
+            ret.emplace_back(objectSchema->property_for_name(prop->link_origin_property_name)->table_column,
+                             ObjectStore::table_for_object_type(group, objectSchema->name));
+        }
+    }
+    return ret;
+}
+
 @interface RLMSyncSubscription ()
 @property (nonatomic, readwrite) RLMSyncSubscriptionState state;
 @property (nonatomic, readwrite, nullable) NSError *error;
@@ -41,14 +85,31 @@ using namespace realm;
     RLMRealm *_realm;
 }
 
-- (instancetype)initWithName:(NSString *)name results:(Results const&)results realm:(RLMRealm *)realm {
+- (instancetype)initWithOptions:(RLMSyncSubscriptionOptions *)options results:(Results const&)results realm:(RLMRealm *)realm {
     if (!(self = [super init]))
         return nil;
 
-    _name = [name copy];
+    _name = [options.name copy];
     _realm = realm;
     try {
-        _subscription = partial_sync::subscribe(results, name ? util::make_optional<std::string>(name.UTF8String) : util::none);
+        partial_sync::SubscriptionOptions opt;
+        if (options.name) {
+            opt.user_provided_name = std::string(RLMStringDataWithNSString(options.name));
+        }
+        if (options.timeToLive) {
+            opt.time_to_live_ms = options.timeToLive * 1000;
+        }
+        opt.update = options.overwriteExisting;
+        if (options.includeLinkingObjectProperties) {
+            std::vector<std::vector<LinkPathPart>> keypaths;
+            for (NSString *keyPath in options.includeLinkingObjectProperties) {
+                keypaths.push_back(parseKeypath(keyPath.UTF8String, realm.group,
+                                                realm->_realm->schema(),
+                                                &results.get_object_schema()));
+            }
+            opt.inclusions = IncludeDescriptor{*ObjectStore::table_for_object_type(realm.group, results.get_object_type()), keypaths};
+        }
+        _subscription = partial_sync::subscribe(options.limit == -1 ? results : results.limit(options.limit), std::move(opt));
     }
     catch (std::exception const& e) {
         @throw RLMException(e);
@@ -231,15 +292,24 @@ RLMClassInfo& RLMResultsSetInfo::get(__unsafe_unretained RLMRealm *const realm) 
 
 @implementation RLMResults (SyncSubscription)
 - (RLMSyncSubscription *)subscribe {
-    return [[RLMSyncSubscription alloc] initWithName:nil results:_results realm:self.realm];
+    return [[RLMSyncSubscription alloc] initWithOptions:nil results:_results realm:self.realm];
 }
 
 - (RLMSyncSubscription *)subscribeWithName:(NSString *)subscriptionName {
-    return [[RLMSyncSubscription alloc] initWithName:subscriptionName results:_results realm:self.realm];
+    auto options = [[RLMSyncSubscriptionOptions alloc] init];
+    options.name = subscriptionName;
+    return [[RLMSyncSubscription alloc] initWithOptions:options results:_results realm:self.realm];
 }
 
 - (RLMSyncSubscription *)subscribeWithName:(NSString *)subscriptionName limit:(NSUInteger)limit {
-    return [[RLMSyncSubscription alloc] initWithName:subscriptionName results:_results.limit(limit) realm:self.realm];
+    auto options = [[RLMSyncSubscriptionOptions alloc] init];
+    options.name = subscriptionName;
+    options.limit = limit;
+    return [[RLMSyncSubscription alloc] initWithOptions:options results:_results realm:self.realm];
+}
+
+- (RLMSyncSubscription *)subscribeWithOptions:(RLMSyncSubscriptionOptions *)options {
+    return [[RLMSyncSubscription alloc] initWithOptions:options results:_results realm:self.realm];
 }
 @end
 

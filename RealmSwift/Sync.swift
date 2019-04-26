@@ -983,6 +983,8 @@ extension Results {
     /// subscription. If the limit is larger than the number of objects which
     /// match the query, all objects will be included.
     ///
+    /// By default, subscriptions do not pull in objects which *link to* the subscribed objects (only objects which the subscribed objects link to). This means that LinkingObjects properties will only report the objects which happen to be included by some other subscription.
+    ///
     /// Creating a subscription is an asynchronous operation and the newly
     /// created subscription will not be reported by Realm.subscriptions() until
     /// it has transitioned from the `.creating` state to `.pending`,
@@ -991,7 +993,8 @@ extension Results {
     /// - parameter subscriptionName: An optional name for the subscription.
     /// - parameter limit: The maximum number of objects to include in the subscription.
     /// - returns: The subscription.
-    public func subscribe(named subscriptionName: String? = nil, limit: Int? = nil) -> SyncSubscription<Element> {
+    public func subscribe(named subscriptionName: String? = nil, limit: Int? = nil,
+                          includingLinkingObjects: [String] = []) -> SyncSubscription<Element> {
         if let limit = limit {
             return SyncSubscription(rlmResults.subscribe(withName: subscriptionName, limit: UInt(limit)))
         }

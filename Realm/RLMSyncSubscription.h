@@ -121,6 +121,14 @@ typedef RLM_CLOSED_ENUM(NSInteger, RLMSyncSubscriptionState) {
 
 @end
 
+@interface RLMSyncSubscriptionOptions : NSObject
+@property (nonatomic, copy, nullable) NSString *name;
+@property (nonatomic) BOOL overwriteExisting;
+@property (nonatomic) NSTimeInterval timeToLive;
+@property (nonatomic) NSUInteger limit;
+@property (nonatomic, copy, nullable) NSArray<NSString *> *includeLinkingObjectProperties;
+@end
+
 /**
  Support for subscribing to the results of object queries in a synced Realm.
  */
@@ -214,6 +222,7 @@ typedef RLM_CLOSED_ENUM(NSInteger, RLMSyncSubscriptionState) {
  @see RLMSyncSubscription
  */
 - (RLMSyncSubscription *)subscribeWithName:(nullable NSString *)subscriptionName limit:(NSUInteger)limit;
+- (RLMSyncSubscription *)subscribeWithOptions:(RLMSyncSubscriptionOptions *)options;
 @end
 
 /**
